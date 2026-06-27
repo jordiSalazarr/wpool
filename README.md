@@ -5,7 +5,7 @@ A small, generic worker pool for Go (1.21+) with backpressure, graceful shutdown
 ## Install
 
 ```
-go get github.com/J-hu960/wpool
+go get github.com/jordiSalazarr/wpool
 ```
 
 ## Use
@@ -17,7 +17,7 @@ import (
     "context"
     "fmt"
 
-    "github.com/J-hu960/wpool"
+    "github.com/jordiSalazarr/wpool"
 )
 
 type Job struct{ ID int }

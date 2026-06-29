@@ -1,4 +1,4 @@
-package wpool
+package stream
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/jordiSalazarr/wpool"
 )
 
 type Job struct {
@@ -36,7 +38,7 @@ func TestNew(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, err := New(context.Background(), Config{Workers: tt.workers}, tt.convert)
+			p, err := New(context.Background(), wpool.Config{Workers: tt.workers}, tt.convert)
 			if (err != nil) != tt.expectError {
 				t.Fatalf("expectError=%v, got err=%v", tt.expectError, err)
 			}
@@ -49,12 +51,11 @@ func TestNew(t *testing.T) {
 
 func TestPoolContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	p, err := New(ctx, Config{Workers: 4}, testFunc)
+	p, err := New(ctx, wpool.Config{Workers: 4}, testFunc)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Drain so workers blocked mid-send can exit on ctx.Done.
 	drained := make(chan struct{})
 	go func() {
 		for range p.Results() {
@@ -74,7 +75,7 @@ func TestPoolContextCancel(t *testing.T) {
 
 func TestPublishAndReceive(t *testing.T) {
 	total := 10
-	p, err := New(context.Background(), Config{Workers: 100}, testFunc)
+	p, err := New(context.Background(), wpool.Config{Workers: 100}, testFunc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +104,7 @@ func TestPublishAndReceive(t *testing.T) {
 }
 
 func TestPublishAfterCloseReturnsError(t *testing.T) {
-	p, err := New(context.Background(), Config{Workers: 1}, testFunc)
+	p, err := New(context.Background(), wpool.Config{Workers: 1}, testFunc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +114,7 @@ func TestPublishAfterCloseReturnsError(t *testing.T) {
 	}()
 	_ = p.Close()
 
-	if err := p.Publish(Job{}); !errors.Is(err, ErrPoolClosed) {
+	if err := p.Publish(Job{}); !errors.Is(err, wpool.ErrPoolClosed) {
 		t.Fatalf("expected ErrPoolClosed, got %v", err)
 	}
 }
@@ -122,7 +123,7 @@ func TestResultCarriesInputOnError(t *testing.T) {
 	failing := func(ctx context.Context, in Job) (JobResult, error) {
 		return JobResult{}, fmt.Errorf("boom %d", in.Id)
 	}
-	p, err := New(context.Background(), Config{Workers: 2}, failing)
+	p, err := New(context.Background(), wpool.Config{Workers: 2}, failing)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +149,7 @@ func TestResultCarriesInputOnError(t *testing.T) {
 }
 
 func TestPublishOnClosedPool(t *testing.T) {
-	pool, err := New(context.Background(), Config{Workers: 100}, testFunc)
+	pool, err := New(context.Background(), wpool.Config{Workers: 100}, testFunc)
 	if err != nil {
 		t.Errorf("error creating pool")
 	}
@@ -161,7 +162,7 @@ func TestPublishOnClosedPool(t *testing.T) {
 }
 
 func TestClosingTwice(t *testing.T) {
-	pool, err := New(context.Background(), Config{Workers: 100}, testFunc)
+	pool, err := New(context.Background(), wpool.Config{Workers: 100}, testFunc)
 	if err != nil {
 		t.Errorf("error creating pool")
 	}

@@ -1,31 +1,21 @@
-// Package wpool provides a generic worker pool with backpressure, graceful
-// shutdown, and result correlation.
-package wpool
+// Package stream provides a worker pool with a single shared results
+// channel. Use it for pipeline/batch processing with one (or a known small
+// set of) consumer(s).
+package stream
 
 import (
 	"context"
-	"errors"
 	"sync"
+
+	"github.com/jordiSalazarr/wpool"
 )
 
-// Result carries the input that produced a unit of work alongside its
-// outcome. On success Err is nil; on failure Out is the zero value and Err
-// describes the failure. In is always populated so callers can correlate,
-// log, or retry.
-type Result[In, Out any] struct {
-	In  In
-	Out Out
-	Err error
-}
-
-// Config configures a Pool.
-type Config struct {
-	// Workers is the number of worker goroutines. Must be > 0.
-	Workers int
-}
-
-// Pool is a generic worker pool. Construct with New. Submit work with
-// Publish. Consume outcomes from Results. Shut down with Close.
+// Pool is a worker pool whose workers multiplex their results into a single
+// channel exposed by Results. Construct with New. Submit work with Publish.
+// Shut down with Close.
+//
+// Callers MUST drain Results until it closes. A consumer that walks away
+// will block workers mid-send and deadlock Close.
 type Pool[In, Out any] struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -33,7 +23,7 @@ type Pool[In, Out any] struct {
 	convert func(context.Context, In) (Out, error)
 
 	in  chan In
-	out chan Result[In, Out]
+	out chan wpool.Result[In, Out]
 
 	wg sync.WaitGroup
 
@@ -42,30 +32,18 @@ type Pool[In, Out any] struct {
 	sendWg  sync.WaitGroup
 }
 
-var (
-	// ErrPoolClosed is returned by Publish after Close has been called.
-	ErrPoolClosed = errors.New("wpool: pool is closed")
-	// ErrNilConvert is returned by New when the convert function is nil.
-	ErrNilConvert = errors.New("wpool: convert function is nil")
-	// ErrInvalidWorkers is returned by New when Config.Workers <= 0.
-	ErrInvalidWorkers = errors.New("wpool: workers must be > 0")
-)
-
 // New constructs a Pool. The pool's lifetime is bound to ctx: cancelling ctx
 // stops workers (forceful). For graceful shutdown call Close.
-//
-// Callers MUST drain Results until it closes. A consumer that walks away
-// will block workers mid-send and deadlock Close.
 func New[In, Out any](
 	ctx context.Context,
-	cfg Config,
+	cfg wpool.Config,
 	convert func(context.Context, In) (Out, error),
 ) (*Pool[In, Out], error) {
 	if convert == nil {
-		return nil, ErrNilConvert
+		return nil, wpool.ErrNilConvert
 	}
 	if cfg.Workers <= 0 {
-		return nil, ErrInvalidWorkers
+		return nil, wpool.ErrInvalidWorkers
 	}
 	cctx, cancel := context.WithCancel(ctx)
 	p := &Pool[In, Out]{
@@ -74,7 +52,7 @@ func New[In, Out any](
 		workers: cfg.Workers,
 		convert: convert,
 		in:      make(chan In),
-		out:     make(chan Result[In, Out]),
+		out:     make(chan wpool.Result[In, Out]),
 	}
 	p.wg.Add(p.workers)
 	for i := 0; i < p.workers; i++ {
@@ -95,7 +73,7 @@ func (p *Pool[In, Out]) Publish(job In) error {
 	p.closeMu.Lock()
 	if p.closed {
 		p.closeMu.Unlock()
-		return ErrPoolClosed
+		return wpool.ErrPoolClosed
 	}
 	p.sendWg.Add(1)
 	p.closeMu.Unlock()
@@ -111,14 +89,13 @@ func (p *Pool[In, Out]) Publish(job In) error {
 
 // Results returns the channel of outcomes. Closed after Close returns, or
 // after all workers exit due to context cancellation.
-func (p *Pool[In, Out]) Results() <-chan Result[In, Out] {
+func (p *Pool[In, Out]) Results() <-chan wpool.Result[In, Out] {
 	return p.out
 }
 
 // Close performs a graceful shutdown: refuses new Publish calls, waits for
 // in-flight Publishes, closes the input so workers drain, waits for workers,
-// then releases the context. Idempotent. Returns nil today; the error
-// return is reserved for future timeout/force semantics.
+// then releases the context. Idempotent.
 func (p *Pool[In, Out]) Close() error {
 	p.closeMu.Lock()
 	if p.closed {
@@ -146,7 +123,7 @@ func (p *Pool[In, Out]) worker() {
 				return
 			}
 			out, err := p.convert(p.ctx, job)
-			res := Result[In, Out]{In: job, Out: out, Err: err}
+			res := wpool.Result[In, Out]{In: job, Out: out, Err: err}
 			select {
 			case p.out <- res:
 			case <-p.ctx.Done():
